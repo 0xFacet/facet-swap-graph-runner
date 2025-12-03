@@ -67,7 +67,7 @@ services:
     environment:
       SUBGRAPH_REPO: ${SUBGRAPH_REPO:-https://github.com/0xFacet/facetswap-subgraph.git}
       SUBGRAPH_REF: ${SUBGRAPH_REF:-main}
-      SUBGRAPH_NAME: ${SUBGRAPH_NAME:-facetswap/mainnet}
+      SUBGRAPH_NAME: ${SUBGRAPH_NAME:-facet/uniswap-v2}
     entrypoint: /bin/sh
     command:
       - -c
