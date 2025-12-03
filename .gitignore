@@ -1,0 +1,5 @@
+# Persistent data volumes
+data/
+
+# Environment files with secrets
+.env

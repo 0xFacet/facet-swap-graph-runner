@@ -1,0 +1,106 @@
+services:
+  graph-node:
+    image: graphprotocol/graph-node:${GRAPH_NODE_VERSION:-v0.35.1}
+    ports:
+      - "${GRAPHQL_PORT:-8000}:8000"
+      - "${GRAPHQL_WS_PORT:-8001}:8001"
+      - "${ADMIN_PORT:-8020}:8020"
+      - "${INDEX_STATUS_PORT:-8030}:8030"
+      - "${METRICS_PORT:-8040}:8040"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ipfs:
+        condition: service_started
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    environment:
+      postgres_host: postgres
+      postgres_user: ${POSTGRES_USER:-graph-node}
+      postgres_pass: ${POSTGRES_PASSWORD:-let-me-in}
+      postgres_db: ${POSTGRES_DB:-graph-node}
+      ipfs: 'ipfs:5001'
+      ethereum: '${NETWORK_NAME:-facet}:${ETHEREUM_RPC_URL:-https://mainnet.facet.org}'
+      GRAPH_LOG: ${GRAPH_LOG:-info}
+      GRAPH_ETHEREUM_CLEANUP_BLOCKS: ${GRAPH_ETHEREUM_CLEANUP_BLOCKS:-true}
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8020 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  ipfs:
+    image: ipfs/kubo:${IPFS_VERSION:-v0.17.0}
+    volumes:
+      - ipfs-data:/data/ipfs
+
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-15}
+    command:
+      [
+        "postgres",
+        "-cshared_preload_libraries=pg_stat_statements",
+        "-cmax_connections=${POSTGRES_MAX_CONNECTIONS:-200}"
+      ]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-graph-node}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-let-me-in}
+      POSTGRES_DB: ${POSTGRES_DB:-graph-node}
+      PGDATA: "/var/lib/postgresql/data"
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-graph-node}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  subgraph-deploy:
+    image: node:18-alpine
+    working_dir: /subgraph
+    depends_on:
+      graph-node:
+        condition: service_healthy
+    environment:
+      SUBGRAPH_REPO: ${SUBGRAPH_REPO:-https://github.com/0xFacet/facetswap-subgraph.git}
+      SUBGRAPH_REF: ${SUBGRAPH_REF:-main}
+      SUBGRAPH_NAME: ${SUBGRAPH_NAME:-facetswap/mainnet}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        apk add --no-cache git
+
+        echo "Cloning subgraph from $${SUBGRAPH_REPO} (ref: $${SUBGRAPH_REF})..."
+        git clone --depth 1 --branch "$${SUBGRAPH_REF}" "$${SUBGRAPH_REPO}" .
+
+        echo "Installing dependencies..."
+        npm install -g @graphprotocol/graph-cli
+        yarn install --frozen-lockfile
+
+        echo "Building subgraph..."
+        yarn build
+
+        echo "Creating subgraph..."
+        graph create "$${SUBGRAPH_NAME}" --node http://graph-node:8020 || true
+
+        echo "Deploying subgraph..."
+        graph deploy "$${SUBGRAPH_NAME}" \
+          --node http://graph-node:8020 \
+          --ipfs http://ipfs:5001 \
+          --version-label v0.0.1
+
+        echo ""
+        echo "=========================================="
+        echo "Subgraph deployed successfully!"
+        echo "=========================================="
+
+volumes:
+  ipfs-data:
+    name: ${COMPOSE_PROJECT_NAME:-facet-graph}_ipfs-data
+  postgres-data:
+    name: ${COMPOSE_PROJECT_NAME:-facet-graph}_postgres-data
